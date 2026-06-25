@@ -20,10 +20,16 @@
       <div class="tab-content mt-3">
         <div class="tab-pane fade show active" id="users" role="tabpanel">
           <table class="table table-striped" id="users-table">
-            <thead><tr><th>Kullanici Adi</th><th>IP Adresi</th><th>Mevcut Hız (Mbps)</th><th>Yeni Hız</th><th>Uygula</th></tr></thead>
+            <thead><tr><th>Kullanici Adi</th><th>IP Adresi</th><th>Switch Adı</th><th>Mevcut Hız (Mbps)</th><th>Yeni Hız</th><th>Uygula</th></tr></thead>
             <tbody></tbody>
           </table>
           <button class="btn btn-sm btn-secondary" id="refresh-users">Yenile</button>
+          <form id="import-users-form" class="mt-3">
+            <h5>Kullanıcı Excel Yükle (IP + İsim Soyisim)</h5>
+            <div class="mb-2"><input class="form-control" type="file" name="file" accept=".xlsx" required></div>
+            <small class="text-muted">Sadece IP ve kullanıcı adı/soyadı içeren Excel yükleyin. Hız bilgisi otomatik olarak bağlı switch portundan alınır.</small>
+            <button class="btn btn-primary mt-2">Excel İçe Aktar</button>
+          </form>
         </div>
         <div class="tab-pane fade" id="switches" role="tabpanel">
           <table class="table table-striped" id="switch-table">
@@ -50,7 +56,7 @@
         tbody.innerHTML = '';
         data.forEach(u=>{
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${u.Kullanici_Adi}</td><td>${u.IP_Adresi}</td><td>${u.Mevcut_Hiz || ''}</td><td><select class="form-select form-select-sm speed-select"><option value="10">10 Mbps</option><option value="50">50 Mbps</option><option value="unlimited">Sınırsız</option></select></td><td><button class="btn btn-sm btn-success apply-btn">Hızı Uygula</button></td>`;
+          tr.innerHTML = `<td>${u.Kullanici_Adi}</td><td>${u.IP_Adresi}</td><td>${u.Switch_Adi || ''}</td><td>${u.Mevcut_Hiz || ''}</td><td><select class="form-select form-select-sm speed-select"><option value="10">10 Mbps</option><option value="50">50 Mbps</option><option value="unlimited">Sınırsız</option></select></td><td><button class="btn btn-sm btn-success apply-btn">Hızı Uygula</button></td>`;
           tr.querySelector('.apply-btn').addEventListener('click', async ()=>{
             const speed = tr.querySelector('.speed-select').value;
             const body = {kullanici_adi:u.Kullanici_Adi, kullanici_ip:u.IP_Adresi, speed_choice:speed};
@@ -76,6 +82,27 @@
       }
 
       document.getElementById('refresh-users').addEventListener('click', loadUsers);
+      document.getElementById('import-users-form').addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const f = e.target;
+        const formData = new FormData(f);
+        try{
+          const res = await fetch('/api/import_users', {method:'POST', body:formData});
+          const json = await res.json().catch(()=>null);
+          if(res.ok) {
+            alert('Excel yüklendi. Satır sayısı: '+json.rows);
+            loadUsers();
+            f.reset();
+          } else {
+            const err = json || {detail:'unknown'};
+            console.error('Import users error', err);
+            alert('Hata: '+(err.detail||'Unknown'))
+          }
+        }catch(ex){
+          console.error('Network error importing users', ex);
+          alert('Ağ hatası: '+ex.message)
+        }
+      });
       document.getElementById('add-switch-form').addEventListener('submit', async (e)=>{
         e.preventDefault();
         const f = e.target;

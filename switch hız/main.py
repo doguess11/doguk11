@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import uvicorn
 import pandas as pd
 import os
+import io
 from utils import (
     load_data_from_excels,
     check_switch_status,
@@ -52,7 +53,8 @@ def index():
 @app.get('/api/users')
 def api_users():
     users, switches = load_data_from_excels()
-    # Her kullanıcı için MAC, port ve mevcut hız sorgula
+    switch_map = {str(sw['IP_Adresi']).strip(): str(sw['Switch_Adi']) for idx, sw in switches.iterrows()}
+
     data = []
     for idx, u in users.iterrows():
         name = u['Kullanici_Adi']
@@ -62,8 +64,50 @@ def api_users():
         cur_speed = None
         if mac:
             sw_ip2, port, cur_speed = get_port_and_current_speed(mac)
-        data.append({'Kullanici_Adi': name, 'IP_Adresi': ip, 'Switch_IP': sw_ip or sw_ip2, 'Port': port, 'Mevcut_Hiz': cur_speed})
+        switch_name = switch_map.get(sw_ip or sw_ip2, sw_ip or sw_ip2 or '')
+        hedef_hiz = None
+        if 'Hiz' in users.columns and not pd.isna(u['Hiz']):
+            hedef_hiz = u['Hiz']
+        elif 'Hedef_Hiz' in users.columns and not pd.isna(u['Hedef_Hiz']):
+            hedef_hiz = u['Hedef_Hiz']
+        data.append({
+            'Kullanici_Adi': name,
+            'IP_Adresi': ip,
+            'Switch_Adi': switch_name,
+            'Port': port,
+            'Mevcut_Hiz': cur_speed,
+            'Hedef_Hiz': int(hedef_hiz) if hedef_hiz is not None and str(hedef_hiz).strip() != '' else None,
+        })
     return data
+
+
+@app.post('/api/import_users')
+async def api_import_users(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f'Excel okunamadı: {e}')
+
+    normalized = {}
+    for col in df.columns:
+        key = str(col).strip().lower().replace(' ', '').replace('_', '')
+        if key in ['ip', 'ipadresi', 'kullaniciip', 'kullanıcıip', 'kullaniciipadresi', 'kullanıcıipadresi', 'bilgisayarip', 'bilgisayaripadresi', 'kullanıcıbilgisayarip', 'kullanıcıbilgisayaripadresi']:
+            normalized['IP_Adresi'] = col
+        elif key in ['adsoyad', 'isimsoyisim', 'kullaniciisimsoyisim', 'kullanıcıisimsoyisim', 'ad', 'isim', 'kullaniciadi', 'kullanıcıadi', 'kullaniciisim', 'kullanıcıisim']:
+            normalized['Kullanici_Adi'] = col
+        elif key in ['hiz', 'hızı', 'speed']:
+            normalized['Hiz'] = col
+    if 'IP_Adresi' not in normalized or 'Kullanici_Adi' not in normalized:
+        raise HTTPException(status_code=400, detail='Excelde IP_Adresi ve Kullanici_Adi sütunları gereklidir.')
+
+    users = pd.DataFrame()
+    users['IP_Adresi'] = df[normalized['IP_Adresi']].astype(str).str.strip()
+    users['Kullanici_Adi'] = df[normalized['Kullanici_Adi']].astype(str).str.strip()
+    if 'Hiz' in normalized:
+        users['Hiz'] = df[normalized['Hiz']].where(pd.notna(df[normalized['Hiz']]), None)
+    users.to_excel(USERS_XLSX, index=False)
+    return {'status': 'ok', 'rows': len(users)}
 
 
 @app.get('/api/switches')
